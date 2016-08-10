@@ -22,13 +22,13 @@
  * THE SOFTWARE.
  */
 #include "ws2812_i2s.h"
-#include "ws2812_dma.h"
+#include "i2s_dma.h"
 
 #include <string.h>
 #include <stdio.h>
 
-static struct SLCDescriptor i2sBufDescOut;
-static struct SLCDescriptor i2sBufDescZeroes;
+static dma_descriptor_t i2sBufDescOut;
+static dma_descriptor_t i2sBufDescZeroes;
 
 #define WS_BLOCKSIZE 4000
 
@@ -40,17 +40,27 @@ void ws2812_i2s_init()
     memset(i2sZeroes, 0, 32);
     memset(i2sBlock, 0b10001110, WS_BLOCKSIZE);
 
-    i2sBufDescOut.flags = SLC_DESCRIPTOR_FLAGS(WS_BLOCKSIZE, WS_BLOCKSIZE,
-            0, 0, 1);
-    i2sBufDescOut.buf_ptr = (uint32_t)i2sBlock;
-    i2sBufDescOut.next_link_ptr = (uint32_t)&i2sBufDescZeroes;
-    printf("desc out flags: %x\n", i2sBufDescOut.flags);
+    i2sBufDescOut.owner = 1;
+    i2sBufDescOut.eof = 0;
+    i2sBufDescOut.sub_sof = 0;
+    i2sBufDescOut.unused = 0;
+    i2sBufDescOut.datalen = WS_BLOCKSIZE;
+    i2sBufDescOut.blocksize = WS_BLOCKSIZE;
+    i2sBufDescOut.buf_ptr = i2sBlock;
+    i2sBufDescOut.next_link_ptr = &i2sBufDescZeroes;
 
-    i2sBufDescZeroes.flags = SLC_DESCRIPTOR_FLAGS(32, 32, 0, 0, 1);
-    i2sBufDescZeroes.buf_ptr = (uint32_t)i2sZeroes;
-    i2sBufDescZeroes.next_link_ptr = (uint32_t)&i2sBufDescOut;
-    printf("desc zero flags: %x\n", i2sBufDescZeroes.flags);
+    i2sBufDescZeroes.owner = 1;
+    i2sBufDescZeroes.eof = 0;
+    i2sBufDescZeroes.sub_sof = 0;
+    i2sBufDescZeroes.unused = 0;
+    i2sBufDescZeroes.datalen = 32;
+    i2sBufDescZeroes.blocksize = 32;
+    i2sBufDescZeroes.buf_ptr = i2sZeroes;
+    i2sBufDescZeroes.next_link_ptr = &i2sBufDescOut;
 
-    ws2812_dma_init(&i2sBufDescOut);
+    i2s_pins_t i2s_pins = { .data = true, .clock = false, .ws = false};
+    i2s_clock_div_t clock_div = i2s_get_clock_div(3333333);  // 3.333 MHz
+
+    i2s_dma_init(&i2sBufDescOut, NULL, clock_div, i2s_pins);
 }
 
