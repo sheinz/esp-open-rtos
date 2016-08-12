@@ -61,8 +61,7 @@ void sdk_rom_i2c_writeReg_Mask(uint32_t block, uint32_t host_id, uint32_t reg_ad
 #define i2c_readReg_Mask_def(block, reg_add) i2c_readReg_Mask(block, block##_hostid,  reg_add,  reg_add##_msb,  reg_add##_lsb)
 
 
-void i2s_dma_init(dma_descriptor_t *descr, i2s_dma_isr_t isr, 
-        i2s_clock_div_t clock_div, i2s_pins_t pins)
+void i2s_dma_init(i2s_dma_isr_t isr, i2s_clock_div_t clock_div, i2s_pins_t pins)
 {
     // reset DMA
     SET_MASK_BITS(SLC.CONF0, SLC_CONF0_RX_LINK_RESET);
@@ -82,10 +81,6 @@ void i2s_dma_init(dma_descriptor_t *descr, i2s_dma_isr_t isr,
     CLEAR_MASK_BITS(SLC.RX_DESCRIPTOR_CONF, SLC_RX_DESCRIPTOR_CONF_RX_FILL_ENABLE |
             SLC_RX_DESCRIPTOR_CONF_RX_EOF_MODE | SLC_RX_DESCRIPTOR_CONF_RX_FILL_MODE);
 
-    // configure DMA descriptor
-    SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, 0);
-    SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, (uint32_t)descr);
-
     if (isr) {
         _xt_isr_attach(INUM_SLC, isr);
         SET_MASK_BITS(SLC.INT_ENABLE, SLC_INT_ENABLE_RX_EOF);
@@ -96,8 +91,15 @@ void i2s_dma_init(dma_descriptor_t *descr, i2s_dma_isr_t isr,
     // start transmission
     SET_MASK_BITS(SLC.RX_LINK, SLC_RX_LINK_START);
 
-    // init pin to i2s function
-    iomux_set_function(gpio_to_iomux(3), IOMUX_GPIO3_FUNC_I2SO_DATA);
+    if (pins.data) {
+        iomux_set_function(gpio_to_iomux(3), IOMUX_GPIO3_FUNC_I2SO_DATA);
+    }
+    if (pins.clock) {
+        iomux_set_function(gpio_to_iomux(15), IOMUX_GPIO15_FUNC_I2SO_BCK);
+    }
+    if (pins.ws) {
+        iomux_set_function(gpio_to_iomux(2), IOMUX_GPIO2_FUNC_I2SO_WS);
+    }
 
     // enable clock to i2s subsystem
     i2c_writeReg_Mask_def(i2c_bbpll, i2c_bbpll_en_audio_clock_out, 1);
@@ -151,8 +153,12 @@ i2s_clock_div_t i2s_get_clock_div(int32_t freq)
     return div;
 }
 
-void i2s_dma_start()
+void i2s_dma_start(dma_descriptor_t *descr)
 {
+    // configure DMA descriptor
+    SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, 0);
+    SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, (uint32_t)descr);
+
     //Start transmission
     SET_MASK_BITS(I2S.CONF, I2S_CONF_TX_START);
 }

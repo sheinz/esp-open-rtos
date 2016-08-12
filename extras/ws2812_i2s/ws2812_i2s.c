@@ -38,90 +38,144 @@
 
 #define MAX_DMA_BLOCK_SIZE      4095  // 12 bits
 #define DMA_PIXEL_SIZE          12    // each color takes 4 bytes
+
+/**
+ * Amount of zero data to produce WS2812 reset condition.
+ * DMA data must be multiple of 4
+ * 16 bytes of 0 gives ~50 microseconds of low pulse
+ */
 #define WS2812_ZEROES_LENGTH    16
 
 static uint8_t i2s_dma_zero_buf[WS2812_ZEROES_LENGTH] = {0};
 
-// debug
+static dma_descriptor_t *dma_block_list;
+static uint32_t dma_block_list_size;
+
+static void *dma_buffer;
+static uint32_t dma_buffer_size;
+
+#ifdef WS2812_I2S_DEBUG
 volatile uint32_t dma_isr_counter = 0;
+#endif
+
+static volatile bool i2s_dma_processing = false;
 
 static void dma_isr_handler(void)
 {
-    dma_isr_counter++;
-    i2s_dma_clear_interrupt();
     if (i2s_dma_is_eof_interrupt()) {
-        /* dma_descriptor_t *eof_descr = i2s_dma_get_eof_descriptor(); */
+#ifdef WS2812_I2S_DEBUG
+        dma_isr_counter++;
+#endif
+        i2s_dma_processing = false;
     }
+    i2s_dma_clear_interrupt();
 }
 
 /**
- * Form linked list of descriptors (dma blocks).
- * The last two blocks are zero blocks. The form an end loop.
- * In the end loop I2S DMA idle loop untill new data is feed.
+ * Form a linked list of descriptors (dma blocks).
+ * The last two blocks are zero block and stop block.
+ * The last block is a stop terminal block. It has no data and no next block.
  */
-static inline void init_descriptors_list(dma_descriptor_t *dma_blocks, 
-        uint32_t size, uint32_t total_dma_buf_size)
+static inline void init_descriptors_list(uint8_t *buf, uint32_t total_dma_data_size)
 {
-    for (int i = 0; i < size; i++) {
-        dma_blocks[i].owner = 1;
-        dma_blocks[i].eof = 0;
-        dma_blocks[i].sub_sof = 0;
-        dma_blocks[i].unused = 0;
+    for (int i = 0; i < dma_block_list_size; i++) {
+        dma_block_list[i].owner = 1;
+        dma_block_list[i].eof = 0;
+        dma_block_list[i].sub_sof = 0;
+        dma_block_list[i].unused = 0;
+        dma_block_list[i].buf_ptr = buf;
 
-        if (total_dma_buf_size >= MAX_DMA_BLOCK_SIZE) {
-            dma_blocks[i].datalen = MAX_DMA_BLOCK_SIZE;
-            dma_blocks[i].blocksize = MAX_DMA_BLOCK_SIZE;
-            total_dma_buf_size -= MAX_DMA_BLOCK_SIZE;
+        if (total_dma_data_size >= MAX_DMA_BLOCK_SIZE) {
+            dma_block_list[i].datalen = MAX_DMA_BLOCK_SIZE;
+            dma_block_list[i].blocksize = MAX_DMA_BLOCK_SIZE;
+            total_dma_data_size -= MAX_DMA_BLOCK_SIZE;
+            buf += MAX_DMA_BLOCK_SIZE;
         } else {
-            dma_blocks[i].datalen = total_dma_buf_size;
-            dma_blocks[i].blocksize = total_dma_buf_size;
-            total_dma_buf_size = 0;
+            dma_block_list[i].datalen = total_dma_data_size;
+            dma_block_list[i].blocksize = total_dma_data_size;
+            total_dma_data_size = 0;
         }
-        if (dma_blocks[i].datalen) {  // allocate memory only for actuall data
-            dma_blocks[i].buf_ptr = malloc(dma_blocks[i].datalen);
-            memset(dma_blocks[i].buf_ptr, 0, dma_blocks[i].datalen);
-        } else {
-            dma_blocks[i].buf_ptr = i2s_dma_zero_buf;
-            dma_blocks[i].datalen = WS2812_ZEROES_LENGTH;
-            dma_blocks[i].blocksize = WS2812_ZEROES_LENGTH;
+
+        if (i == (dma_block_list_size - 2)) {  // zero block
+            dma_block_list[i].buf_ptr = i2s_dma_zero_buf;
+            dma_block_list[i].datalen = WS2812_ZEROES_LENGTH;
+            dma_block_list[i].blocksize = WS2812_ZEROES_LENGTH;
         }
-        if (i == (size - 1)) { // is it the last block
-            // the two last zero block should make a loop
-            dma_blocks[i].next_link_ptr = 0;//&dma_blocks[i-1];
+
+        if (i == (dma_block_list_size - 1)) {  // stop block
+            // it needs a valid buffer even if no data to output
+            dma_block_list[i].buf_ptr = i2s_dma_zero_buf;
+            dma_block_list[i].datalen = 0;
+            dma_block_list[i].blocksize = WS2812_ZEROES_LENGTH;
+            dma_block_list[i].next_link_ptr = 0;
+
+            // the last stop block should trigger interrupt
+            dma_block_list[i].eof = 1;
         } else {
-            dma_blocks[i].next_link_ptr = &dma_blocks[i+1];
+            dma_block_list[i].next_link_ptr = &dma_block_list[i + 1];
         }
     }
-
-    // first zero block should trigger interrupt
-    dma_blocks[size - 2].eof = 1;
 }
 
 void ws2812_i2s_init(uint32_t pixels_number)
 {
-    uint32_t total_dma_buf_size = pixels_number * DMA_PIXEL_SIZE;
-    uint32_t blocks_number = total_dma_buf_size / MAX_DMA_BLOCK_SIZE;
+    dma_buffer_size = pixels_number * DMA_PIXEL_SIZE;
+    dma_block_list_size = dma_buffer_size / MAX_DMA_BLOCK_SIZE;
 
-    if (total_dma_buf_size % MAX_DMA_BLOCK_SIZE) {
-        blocks_number += 1;
+    if (dma_buffer_size % MAX_DMA_BLOCK_SIZE) {
+        dma_block_list_size += 1;
     }
 
-    blocks_number += 2;  // two extra zero blocks
+    dma_block_list_size += 2;  // zero block and stop block
 
-    debug("allocating %d dma blocks\n", blocks_number);
+    debug("allocating %d dma blocks\n", dma_block_list_size);
 
-    dma_descriptor_t *dma_blocks = (dma_descriptor_t*)malloc(
-            blocks_number * sizeof(dma_descriptor_t));
+    dma_block_list = (dma_descriptor_t*)malloc(
+            dma_block_list_size * sizeof(dma_descriptor_t));
 
-    init_descriptors_list(dma_blocks, blocks_number, total_dma_buf_size);
+    debug("allocating %d bytes for DMA buffer\n", dma_buffer_size);
+    dma_buffer = malloc(dma_buffer_size);
+    memset(dma_buffer, 0xFA, dma_buffer_size);
+
+    init_descriptors_list(dma_buffer, dma_buffer_size);
 
     i2s_clock_div_t clock_div = i2s_get_clock_div(3333333);
     i2s_pins_t i2s_pins = {.data = true, .clock = false, .ws = false};
 
-    debug("i2s clock dividers, bclk=%d, clkm=%d\n", 
+    debug("i2s clock dividers, bclk=%d, clkm=%d\n",
             clock_div.bclk_div, clock_div.clkm_div);
 
-    i2s_dma_init(dma_blocks, dma_isr_handler, clock_div, i2s_pins);
-    i2s_dma_start();
+    i2s_dma_init(dma_isr_handler, clock_div, i2s_pins);
 }
 
+const IRAM_DATA int16_t bitpatterns[16] =
+{
+    0b1000100010001000, 0b1000100010001110, 0b1000100011101000, 0b1000100011101110,
+    0b1000111010001000, 0b1000111010001110, 0b1000111011101000, 0b1000111011101110,
+    0b1110100010001000, 0b1110100010001110, 0b1110100011101000, 0b1110100011101110,
+    0b1110111010001000, 0b1110111010001110, 0b1110111011101000, 0b1110111011101110,
+};
+
+void ws2812_i2s_update(ws2812_pixel_t *pixels)
+{
+    while (i2s_dma_processing) {};
+
+    uint16_t *p_dma_buf = dma_buffer;
+
+    for (uint32_t i = 0; i < (dma_buffer_size / DMA_PIXEL_SIZE); i++) {
+        // green
+        *p_dma_buf++ =  bitpatterns[pixels[i].green & 0x0F];
+        *p_dma_buf++ =  bitpatterns[pixels[i].green >> 4];
+
+        // red
+        *p_dma_buf++ =  bitpatterns[pixels[i].red & 0x0F];
+        *p_dma_buf++ =  bitpatterns[pixels[i].red >> 4];
+
+        // blue
+        *p_dma_buf++ =  bitpatterns[pixels[i].blue & 0x0F];
+        *p_dma_buf++ =  bitpatterns[pixels[i].blue >> 4];
+    }
+
+    i2s_dma_processing = true;
+    i2s_dma_start(dma_block_list);
+}

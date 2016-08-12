@@ -56,13 +56,11 @@ typedef struct {
 /**
  * Initialize I2S and DMA subsystems.
  *
- * @param descr Pointer to the first descriptor in the linked list of descriptors.
  * @param isr ISR handler. Can be NULL if interrupt handling is not needed.
  * @param clock_div I2S clock configuration.
  * @param pins I2S pin configuration. Specifies which pins are enabled in I2S.
  */
-void i2s_dma_init(dma_descriptor_t *descr, i2s_dma_isr_t isr, 
-        i2s_clock_div_t clock_div, i2s_pins_t pins);
+void i2s_dma_init(i2s_dma_isr_t isr, i2s_clock_div_t clock_div, i2s_pins_t pins);
 
 /**
  * Calculate I2S dividers for the specified frequency.
@@ -74,8 +72,10 @@ i2s_clock_div_t i2s_get_clock_div(int32_t freq);
 
 /**
  * Start I2S transmittion.
+ *
+ * @param descr Pointer to the first descriptor in the linked list of descriptors.
  */
-void i2s_dma_start();
+void i2s_dma_start(dma_descriptor_t *descr);
 
 /**
  * Stop I2S transmittion.
