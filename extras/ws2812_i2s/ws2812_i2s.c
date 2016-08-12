@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 #include "ws2812_i2s.h"
-#include "i2s_dma.h"
+#include "i2s_dma/i2s_dma.h"
 
 #include <string.h>
 #include <malloc.h>
