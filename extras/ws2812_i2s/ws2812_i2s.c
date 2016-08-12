@@ -25,42 +25,103 @@
 #include "i2s_dma.h"
 
 #include <string.h>
+#include <malloc.h>
+
+#define WS2812_I2S_DEBUG
+
+#ifdef WS2812_I2S_DEBUG
 #include <stdio.h>
+#define debug(fmt, ...) printf("%s" fmt "\n", "ws2812_i2s: ", ## __VA_ARGS__);
+#else
+#define debug(fmt, ...)
+#endif
 
-static dma_descriptor_t i2sBufDescOut;
-static dma_descriptor_t i2sBufDescZeroes;
+#define MAX_DMA_BLOCK_SIZE      4095  // 12 bits
+#define DMA_PIXEL_SIZE          12    // each color takes 4 bytes
+#define WS2812_ZEROES_LENGTH    16
 
-#define WS_BLOCKSIZE 4000
+static uint8_t i2s_dma_zero_buf[WS2812_ZEROES_LENGTH] = {0};
 
-static uint32_t i2sZeroes[32];
-static uint32_t i2sBlock[WS_BLOCKSIZE/4];
+// debug
+volatile uint32_t dma_isr_counter = 0;
 
-void ws2812_i2s_init()
+static void dma_isr_handler(void)
 {
-    memset(i2sZeroes, 0, 32);
-    memset(i2sBlock, 0b10001110, WS_BLOCKSIZE);
+    dma_isr_counter++;
+    i2s_dma_clear_interrupt();
+    if (i2s_dma_is_eof_interrupt()) {
+        /* dma_descriptor_t *eof_descr = i2s_dma_get_eof_descriptor(); */
+    }
+}
 
-    i2sBufDescOut.owner = 1;
-    i2sBufDescOut.eof = 0;
-    i2sBufDescOut.sub_sof = 0;
-    i2sBufDescOut.unused = 0;
-    i2sBufDescOut.datalen = WS_BLOCKSIZE;
-    i2sBufDescOut.blocksize = WS_BLOCKSIZE;
-    i2sBufDescOut.buf_ptr = i2sBlock;
-    i2sBufDescOut.next_link_ptr = &i2sBufDescZeroes;
+/**
+ * Form linked list of descriptors (dma blocks).
+ * The last two blocks are zero blocks. The form an end loop.
+ * In the end loop I2S DMA idle loop untill new data is feed.
+ */
+static inline void init_descriptors_list(dma_descriptor_t *dma_blocks, 
+        uint32_t size, uint32_t total_dma_buf_size)
+{
+    for (int i = 0; i < size; i++) {
+        dma_blocks[i].owner = 1;
+        dma_blocks[i].eof = 0;
+        dma_blocks[i].sub_sof = 0;
+        dma_blocks[i].unused = 0;
 
-    i2sBufDescZeroes.owner = 1;
-    i2sBufDescZeroes.eof = 0;
-    i2sBufDescZeroes.sub_sof = 0;
-    i2sBufDescZeroes.unused = 0;
-    i2sBufDescZeroes.datalen = 32;
-    i2sBufDescZeroes.blocksize = 32;
-    i2sBufDescZeroes.buf_ptr = i2sZeroes;
-    i2sBufDescZeroes.next_link_ptr = &i2sBufDescOut;
+        if (total_dma_buf_size >= MAX_DMA_BLOCK_SIZE) {
+            dma_blocks[i].datalen = MAX_DMA_BLOCK_SIZE;
+            dma_blocks[i].blocksize = MAX_DMA_BLOCK_SIZE;
+            total_dma_buf_size -= MAX_DMA_BLOCK_SIZE;
+        } else {
+            dma_blocks[i].datalen = total_dma_buf_size;
+            dma_blocks[i].blocksize = total_dma_buf_size;
+            total_dma_buf_size = 0;
+        }
+        if (dma_blocks[i].datalen) {  // allocate memory only for actuall data
+            dma_blocks[i].buf_ptr = malloc(dma_blocks[i].datalen);
+            memset(dma_blocks[i].buf_ptr, 0, dma_blocks[i].datalen);
+        } else {
+            dma_blocks[i].buf_ptr = i2s_dma_zero_buf;
+            dma_blocks[i].datalen = WS2812_ZEROES_LENGTH;
+            dma_blocks[i].blocksize = WS2812_ZEROES_LENGTH;
+        }
+        if (i == (size - 1)) { // is it the last block
+            // the two last zero block should make a loop
+            dma_blocks[i].next_link_ptr = 0;//&dma_blocks[i-1];
+        } else {
+            dma_blocks[i].next_link_ptr = &dma_blocks[i+1];
+        }
+    }
 
-    i2s_pins_t i2s_pins = { .data = true, .clock = false, .ws = false};
-    i2s_clock_div_t clock_div = i2s_get_clock_div(3333333);  // 3.333 MHz
+    // first zero block should trigger interrupt
+    dma_blocks[size - 2].eof = 1;
+}
 
-    i2s_dma_init(&i2sBufDescOut, NULL, clock_div, i2s_pins);
+void ws2812_i2s_init(uint32_t pixels_number)
+{
+    uint32_t total_dma_buf_size = pixels_number * DMA_PIXEL_SIZE;
+    uint32_t blocks_number = total_dma_buf_size / MAX_DMA_BLOCK_SIZE;
+
+    if (total_dma_buf_size % MAX_DMA_BLOCK_SIZE) {
+        blocks_number += 1;
+    }
+
+    blocks_number += 2;  // two extra zero blocks
+
+    debug("allocating %d dma blocks\n", blocks_number);
+
+    dma_descriptor_t *dma_blocks = (dma_descriptor_t*)malloc(
+            blocks_number * sizeof(dma_descriptor_t));
+
+    init_descriptors_list(dma_blocks, blocks_number, total_dma_buf_size);
+
+    i2s_clock_div_t clock_div = i2s_get_clock_div(3333333);
+    i2s_pins_t i2s_pins = {.data = true, .clock = false, .ws = false};
+
+    debug("i2s clock dividers, bclk=%d, clkm=%d\n", 
+            clock_div.bclk_div, clock_div.clkm_div);
+
+    i2s_dma_init(dma_blocks, dma_isr_handler, clock_div, i2s_pins);
+    i2s_dma_start();
 }
 

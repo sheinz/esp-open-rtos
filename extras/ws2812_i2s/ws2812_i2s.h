@@ -27,8 +27,27 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+typedef struct {
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+} ws2812_pixel_t;
 
-void ws2812_i2s_init();
+/**
+ * Initialize i2s and dma subsystems to work with ws2812 led strip.
+ *
+ * Please note that each pixel will take 12 bytes of RAM.
+ *
+ * @param pixels_number Number of pixels in the strip.
+ */
+void ws2812_i2s_init(uint32_t pixels_number);
 
+/**
+ * Update ws2812 pixels.
+ *
+ * @param pixels Array of 'pixels_number' pixels. The array must contain all
+ * the pixels.
+ */
+void ws2812_i2s_update(ws2812_pixel_t *pixels);
 
 #endif  // __WS2812_I2S_H__

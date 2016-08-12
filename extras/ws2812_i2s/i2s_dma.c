@@ -29,7 +29,16 @@
 #include "esp/interrupts.h"
 #include "common_macros.h"
 
+#include <stdlib.h>
+
+#define I2S_DMA_DEBUG
+
+#ifdef I2S_DMA_DEBUG
 #include <stdio.h>
+#define debug(fmt, ...) printf("%s" fmt "\n", "i2s_dma: ", ## __VA_ARGS__);
+#else
+#define debug(fmt, ...)
+#endif
 
 // Unknown stuff
 
@@ -77,6 +86,13 @@ void i2s_dma_init(dma_descriptor_t *descr, i2s_dma_isr_t isr,
     SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, 0);
     SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, (uint32_t)descr);
 
+    if (isr) {
+        _xt_isr_attach(INUM_SLC, isr);
+        SET_MASK_BITS(SLC.INT_ENABLE, SLC_INT_ENABLE_RX_EOF);
+        SLC.INT_CLEAR = 0xFFFFFFFF;
+        _xt_isr_unmask(1<<INUM_SLC);
+    }
+
     // start transmission
     SET_MASK_BITS(SLC.RX_LINK, SLC_RX_LINK_START);
 
@@ -111,9 +127,28 @@ void i2s_dma_init(dma_descriptor_t *descr, i2s_dma_isr_t isr,
     I2S.CONF = SET_FIELD(I2S.CONF, I2S_CONF_CLKM_DIV, clock_div.clkm_div);
 }
 
+#define BASE_FREQ (160000000L)
+
 i2s_clock_div_t i2s_get_clock_div(int32_t freq)
 {
-    // TODO: implement
+    i2s_clock_div_t div = {0, 0};
+    int32_t best_freq = 0;
+
+    for (uint32_t bclk_div = 1; bclk_div < 64; bclk_div++) {
+        for (uint32_t clkm_div = 1; clkm_div < 64; clkm_div++) {
+            int32_t curr_freq = BASE_FREQ / (bclk_div * clkm_div);
+            if (abs(freq - curr_freq) < abs(freq - best_freq)) {
+                best_freq = curr_freq;
+                div.clkm_div = clkm_div;
+                div.bclk_div = bclk_div;
+            }
+        }
+    }
+
+    debug("Requested frequency: %d, set frequency: %d\n", freq, best_freq);
+    debug("clkm_div: %d, bclk_div: %d\n", div.clkm_div, div.bclk_div);
+
+    return div;
 }
 
 void i2s_dma_start()
