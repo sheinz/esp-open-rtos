@@ -114,9 +114,6 @@ void i2s_dma_init(i2s_dma_isr_t isr, i2s_clock_div_t clock_div, i2s_pins_t pins)
     I2S.FIFO_CONF = SET_FIELD(I2S.FIFO_CONF, I2S_FIFO_CONF_RX_FIFO_MOD, 0);
     I2S.FIFO_CONF = SET_FIELD(I2S.FIFO_CONF, I2S_FIFO_CONF_TX_FIFO_MOD, 0);
 
-    // enable DMA in i2s subsystem
-    SET_MASK_BITS(I2S.FIFO_CONF, I2S_FIFO_CONF_DESCRIPTOR_ENABLE);
-
     //trans master&rece slave,MSB shift,right_first,msb right
     CLEAR_MASK_BITS(I2S.CONF, I2S_CONF_TX_SLAVE_MOD);
     I2S.CONF = SET_FIELD(I2S.CONF, I2S_CONF_BITS_MOD, 0);
@@ -159,11 +156,15 @@ void i2s_dma_start(dma_descriptor_t *descr)
     SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, 0);
     SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, (uint32_t)descr);
 
+    // enable DMA in i2s subsystem
+    SET_MASK_BITS(I2S.FIFO_CONF, I2S_FIFO_CONF_DESCRIPTOR_ENABLE);
+
     //Start transmission
     SET_MASK_BITS(I2S.CONF, I2S_CONF_TX_START);
 }
 
 void i2s_dma_stop()
 {
-    // TODO: implement
+    SLC.RX_LINK = SET_FIELD(SLC.RX_LINK, SLC_RX_LINK_DESCRIPTOR_ADDR, 0);
+    CLEAR_MASK_BITS(I2S.FIFO_CONF, I2S_FIFO_CONF_DESCRIPTOR_ENABLE);
 }
