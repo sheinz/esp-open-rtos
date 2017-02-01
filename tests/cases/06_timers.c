@@ -62,7 +62,7 @@ static void test_task(void *pvParameters)
     sdk_ets_timer_disarm(&timers[0].handle);
     sdk_ets_timer_setfn(&timers[0].handle, timer_0_cb, (void*)0xAA);
     timers[0].start_time = get_current_time();
-    sdk_ets_timer_arm(&timers[0].handle, 100, false);
+    /* sdk_ets_timer_arm(&timers[0].handle, 100, false); */
 
     sdk_ets_timer_disarm(&timers[1].handle);
     sdk_ets_timer_setfn(&timers[1].handle, timer_1_cb, (void*)0xBB);
