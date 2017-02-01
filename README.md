@@ -7,7 +7,7 @@ Originally based on, but substantially different from, the [Espressif IOT RTOS S
 ## Resources
 
 [![Build Status](https://travis-ci.org/SuperHouse/esp-open-rtos.svg?branch=master)](https://travis-ci.org/SuperHouse/esp-open-rtos)
-[![Tests Status](http://195.138.84.66:8080/buildStatus/icon?job=esp-open-rtos)](http://195.138.84.66:8080/job/esp-open-rtos)
+[![Tests Status](http://195.138.84.66:8080/buildStatus/icon?job=esp-open-rtos-master)](http://195.138.84.66:8080/job/esp-open-rtos-master)
 
 Email discussion list: https://groups.google.com/d/forum/esp-open-rtos
 
