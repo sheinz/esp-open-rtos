@@ -61,13 +61,6 @@ Do not flash the firmware and run only 2 and 4 test cases:
 
 `./test_runner.py -a /dev/tty.wchusbserial1410 -n 2 4`
 
-a line
-another line
-one more line to trigger jenkins
-extra line
-just a line
-test line
-
 ## References
 
 [Unity](https://github.com/ThrowTheSwitch/Unity) - Simple Unit Testing for C
